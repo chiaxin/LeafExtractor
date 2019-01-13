@@ -1,192 +1,386 @@
-﻿/* ---
+﻿/* --------------------------------------------------------
 
+    Photoshop Script (JavaScript)
+    
+    Leaf Extractor 
+    
+    Usage  : Extract all leaf layer into each directories.
+    
     Author : Chia Xin Lin
 
-   --- */
+    Copyright (c) 2019 Chia Xin Lin <nnnight@gmail.com>
 
-(function leaf_extractor () {
-    // JPEG save options
-    var save_options = JPEGSaveOptions;
-    save_options.quality = 12;
-    save_options.alphaChannels = false;
-    save_options.embedColorProfile= false;
-    save_options.matte = MatteType.SEMIGRAY;
-    save_options.scans = FormatOptions.STANDARDBASELINE;
+    Create date : Jan, 10, 2019 (First build)
+
+    Version : 1.0.0
+
+    Last update : 2019-01-13
+
+    Test and Debug Platform :
+    + OS
+        + Microsoft Windows 10
+    + Photoshop
+        + Adobe Photoshop CS6
+-----------------------------------------------------------*/
+
+const SCRIPT_NAME = "Leaf Extractor";
+const VERSION     = "1.0";
+
+(function leaf_extractor (nogui, debug) {
+    var photoshop_version = app.version;
+    var version_number = new Number(app.version.substring(0, app.version.indexOf(".")));
+
+    if (version_number >= 13) {
+        var save_options = JPEGSaveOptions;
+        save_options.quality = 12;
+        save_options.alphaChannels = false;
+        save_options.embedColorProfile= false;
+        save_options.matte = MatteType.SEMIGRAY;
+        save_options.scans = FormatOptions.STANDARDBASELINE;
+    } else {
+        var save_options = PNGSaveOptions;
+        nogui = true;
+    }
 
     function Leafs () {}
-
     Leafs.container = new Array;
+    Leafs.states = new Array;
+    Leafs.length = 0;
+
     Leafs.register = function (leaf) {
-        this.container.push(leaf);
-    };
-    Leafs.save_visible = function () {
-        this.visibilies = new Array;
-        for (var i=0 ; i<this.container.length ; i++) {
-            this.visibilies.push(this.container[i].isOn());
+        // static method : Register a leaf object.
+        // param : 
+        //      leaf - Leaf object
+        // return : Number of leafs.
+        if (debug) { 
+            $.writeln("Register : " + leaf.name); 
         }
+        var current_length = this.container.push(leaf);
+        if (debug) {
+            $.writeln("Number of layer : " + current_length.toString());
+        }
+        return current_length;
     };
+
+    Leafs.save_states = function () {
+        // static method : Save all leaf's visible.
+        // param : none
+        // return : Number of visible state.
+        for (var idx=0 ; idx<this.container.length ; idx++) {
+            this.states.push(this.container[idx].isOn());
+        }
+        return this.states.length;
+    };
+
     Leafs.hide_all = function () {
+        // static method : Hide all leafs.
+        // param : none
+        // return : Number of leaf has been hidden.
+        var counter = 0;
         for (var idx=0 ; idx<this.container.length; idx++) {
-            this.container[idx].off();
+            if (this.container[idx].isOn()) {
+                this.container[idx].off();
+                counter++;
+            }
         }
+        return counter;
     };
+
     Leafs.restore = function () {
-        if (!"visibilies" in this) {
-            this.visibilies = new Array(length=this.container.length, element=true);
-        }
-        for (var i=0 ; i<this.container.length ; i++) {
-            if (this.container[i].isOn() === true) {
-                this.container[i].on();
+        // static method : Restore all leaf's visible.
+        // param : none
+        // return : Number of visible states.
+        var states_length = this.states.length;
+        for (var idx=0 ; idx<this.container.length ; idx++) {
+            if (states_length < idx) { 
+                break; 
+            }
+            if (this.states[idx] === true) {
+                this.container[idx].on(0)
             } else {
-                this.container[i].off();
+                this.container[idx].off();
             }
         }
+        return states_length;
     };
 
-    // Leaf is a wrapper for layer, it could be control layer's behaviors.
-    function Leaf (_layer) {
-        this.layer = _layer;
-        this.name  = this.layer.name;
-        this.save_path = save_to(trace(this.layer));
-        // this.save_path = _save_path;
-        this.on  = function () { this.layer.visible = true; };
-        this.off = function () { this.layer.visible = false; };
-        this.isOn = function () { return this.layer.visible; };
-    }
-   
-    //
-    function trace (layer) {
-        var parent = layer.parent;
-        var full_path = "";
-        while (parent !== app.activeDocument) {
-            full_path = parent.name + "/" + full_path;
-            parent = parent.parent;
+    Leafs.add = function (layer) {
+        // static method : Add a leaf layer.
+        // param :
+        //      layer : ArtLayer object.
+        // return : Leaf object.
+        if (!layer instanceof ArtLayer) {
+            throw Error(layer.toString() + " is not a ArtLayer!");
         }
-        return full_path + "/" + layer.name;
+        var new_leaf = new Leaf(layer);
+        this.register(new_leaf);
+        return new_leaf;
     }
 
-    function save_to (file_path) {
+    Leafs.collect = function () {
+        // static method : Search all leaf layers.
+        // param : none
+        // return : Number of leaf layers.
         var current_document = app.activeDocument;
-        var last_slash = file_path.lastIndexOf('/');
-        var folder = file_path.substr(0, last_slash);
-        var save_name = file_path.substring(last_slash, file_path.length + 1) + ".jpg";
-        var save_folder = current_document.path + "/" + folder
-        return  File(save_folder+ save_name).fsName;
+        var buffer = new Array;
+        for (var idx=0 ; idx<current_document.layerSets.length ; idx++) {
+            buffer.push(current_document.layerSets[idx]);
+        }
+        if (!nogui) {
+            var dialog = new Dialog("Analisys...");
+        }
+        while (buffer.length > 0) {
+            var group = buffer.pop();
+            if (!nogui) {
+                dialog.setinfo("Search : " + group.name);
+            }
+            for (var idx=0 ; idx<group.layers.length ; idx++) {
+                if (group.layers[idx].typename === 'ArtLayer'
+                && is_normal_or_smartobj_layer(group.layers[idx])) {
+                    this.add(group.layers[idx]);
+                } else if (group.layers[idx].typename === 'LayerSet') {
+                    buffer.push(group.layers[idx]);
+                }
+            }
+        }
+        if (!nogui) {
+            dialog.close();
+        }
+        return this.length;
     }
 
-    //
-    function includes (value, array) {
-        for (var i=0 ; i<array.length ; i++) {
-            if (value === array[i]) {
-                return true;
-            }
+    function is_normal_or_smartobj_layer (art_layer) {
+        // function : Check the layer is normal or smart object layer.
+        // param : 
+        //      [ArtLayer] : ArtLayer object.
+        // return : [Boolean]
+        if (art_layer instanceof ArtLayer) {
+            return art_layer.kind === LayerKind.NORMAL 
+            || art_layer.kind === LayerKind.SMARTOBJECT;
         }
         return false;
     }
 
-    //
-    function push_all (main_array, source_array) {
-        for (var i=0 ; i<source_array.length ; i++) {
-            main_array.push(source_array[i]);
-        }
-    }
-
-    //
-    function hide_all (leafs) {
-        var store = new Array;
-        for (var i=0 ; i<leafs.length ; i++) {
-            store.push(leafs[i].isOn());
-            leafs[i].off();
-        }
-        return store;
-    }
-
-    //
-    function recover_all (leafs, visibilies) {
-        for (var i=0 ; i<leafs.length ; i++) {
-            if (visibilies[i]) {
-                leafs[i].on();
-            } else {
-                leafs[i].off();
+    function correct_path_name (path_name) {
+        // function : Correct path name did not have \/:"*?<>|
+        // param :
+        //      [String] path_name
+        // return : [String] 
+        var buffer = "";
+        for (var cid=0 ; cid<path_name.length ; cid++) {
+            var chr = path_name.substr(cid, 1);
+            switch(chr)
+            {
+            case "\\":
+                buffer += "_";
+                break;
+            case "/":
+                buffer += "_";
+                break;
+            case ":":
+                buffer += "_";
+                break;
+            case "\"":
+                buffer += "_";
+                break;
+            case "*":
+                buffer += "_";
+                break;
+            case "?":
+                buffer += "_";
+                break;
+            case "<":
+                buffer += "_";
+                break;
+            case ">":
+                buffer += "_";
+                break;
+            case "|":
+                buffer += "_";
+                break;
+            default:
+                buffer += chr; 
             }
         }
-        return visibilies;
+        return buffer;
     }
 
-    //
-    function get_leaf_layers (root) {
-        var kinds = new Array(LayerKind.SMARTOBJECT, LayerKind.NORMAL);
-        var results = new Array;
-        var buffer = new Array(root);
-        while (buffer.length > 0) {
-            var group = buffer.pop();
-            for (var i=0 ; i<group.layers.length ; i++) {
-                if (group.layers[i].typename === 'ArtLayer'
-                && includes(group.layers[i].kind, kinds)) {
-                    results.push(group.layers[i]);
-                } else if (group.layers[i].typename === 'LayerSet') {
-                    buffer.push(group.layers[i]);
+    function Leaf (_layer) {
+        // object : Leaf layer wrapper.
+        // param :
+        //      _layer : ArtLayer object.
+        // methods :
+        //      on()   Set layer to on.
+        //      off()  Set layer to off.
+        //      isOn() Check layer's visible is on or off.
+        function trace (layer, parents) {
+            // function : Trace all parent about this layer be a full path.
+            // param :
+            //      layer : Layer object.
+            //      parents : A array that can be store all parents.
+            // return : [String] A full path that contain all parent and layer's name.
+            var parent = layer.parent;
+            var full_path = "";
+            while (parent !== app.activeDocument) {
+                parents.push(parent);
+                full_path = correct_path_name(parent.name) + "/" + full_path;
+                parent = parent.parent;
+            }
+            return full_path + "/" + correct_path_name(layer.name);
+        }
+
+        function save_to (file_path) {
+            // function : Get a File object from Photoshop layer's hierarchy.
+            // param :
+            //      file_path : [String] The partial path about layer.
+            // return : [File] The File object by full path.
+            var current_document = app.activeDocument;
+            var last_slash = file_path.lastIndexOf('/');
+            var folder = file_path.substr(0, last_slash);
+            var save_name = file_path.substring(last_slash, file_path.length + 1) + ".jpg";
+            var save_folder = current_document.path + "/" + folder
+            return File(save_folder + save_name);
+        }
+        this.layer = _layer;
+        this.parents = new Array;
+        this.name  = this.layer.name;
+        this.kind  = this.layer.kind;
+        this.save_file = save_to(trace(this.layer, this.parents));
+
+        this.on  = function (store_parent) { 
+            // method : Show layer and its parents.
+            // param:
+            //      store_parent : Store parent's visible state.
+            // return : [Array] Return all parent's visible states.
+            this.layer.visible = true; 
+            var states = new Array;
+            if (store_parent) {
+                for (var pid=0 ; pid<this.parents ; pid++) {
+                    states.push(this.parents[pid].visible);
+                    this.parent[pid].visible = true;
                 }
             }
-        }
-        return results;
+            return states;
+        };
+
+        this.off = function (states) { 
+            // Method : Hide layer and restore parent's visible.
+            // params :
+            //      states : [Array] Parent states.
+            // return : [Number] 0 if no any parent have recover. otherwise return 1.
+            this.layer.visible = false; 
+            if (!states) {
+                return 0;
+            }
+            for (var id=0 ; id<states.length ; id++) {
+                if (this.parents.length < id) {
+                    break;
+                }
+                this.parents[id] = states[id];
+            }
+            return 1;
+        };
+
+        this.isOn = function () { 
+            // Method : Get layer's visible.
+            // params : none
+            // return : [Boolean] Layer's visible.
+            return this.layer.visible; 
+        };
     }
 
-    //
-
-    //
     function extractor () {
-        var current_document = app.activeDocument;
-        var groups = current_document.layerSets;
-        var layers = new Array;
-        for (var i=0 ; i<groups.length ; i++) {
-            try {
-                push_all(layers, get_leaf_layers(groups[i]));
-            } catch (e) {
-                $.write(e);
-                return;
+        var success_counter = 0;
+        try {
+            var current_document = app.activeDocument;
+        } catch (error) {
+            alert("No document could be work!")
+            return 0;
+        }
+
+        if (current_document.artLayers.length === 0
+        ||  !current_document.artLayers[0].isBackgroundLayer) {
+            alert("Must have background layer in document!");
+            return 0;
+        }
+
+        var number_layers = Leafs.collect();
+        if (debug) {
+            $.writeln(number_layers.toString() + " layer(s) has been found.");
+            for (var idx=0 ; idx<Leafs.container.length ; idx++) {
+                $.writeln(Leafs.container[idx].name);
             }
         }
-        /*
-        var leafs = new Array;
-        for (var id=0 ; id<layers.length ; id++) {
-            leafs.push(new Leaf(layers[id])); 
+        Leafs.save_states();
+        var number_of_hidden = Leafs.hide_all();
+        if (debug) {
+            $.writeln(number_of_hidden.toString() + " layer(s) has been hidden.");
         }
-        */
-        for (var id=0 ; id<layers.length ; id++) {
-            Leafs.register(new Leaf(layers[id]));
-        }
-        // var visibilies = hide_all(leafs);
-        Leafs.hide_all();
-        for (var i=0 ; i<Leafs.container.length ; i++) {
-            var layer = Leafs.container[i];
-            $.write("Extract : " + layer.name + " : " + layer.save_path + "\n");
-            var save_image = new File(layer.save_path);
-            var directory = new Folder(save_image.path);
+        var dialog = new Dialog("Extract...");
+        for (var idx=0 ; idx<Leafs.container.length ; idx++) {
+            var layer = Leafs.container[idx];
+            dialog.setinfo("Extract : " + layer.name);
+            // Create directory if it isn't exists.
+            var directory = layer.save_file.parent;
             if (!directory.exists) {
-                var status = directory.create();
-                if (status) {
-                    $.write(directory.fsName + " has been create\n");
+                if (directory.create()) {
+                    if (debug) {
+                        $.writeln(directory.fsName + " has been created.");
+                    }
                 } else {
-                    $.write("Failed to ceate folder : " + directory.fsName + "\n");
+                    if (debug) {
+                        $.writeln("Failed to create directory : " + directory.fsName);
+                    }
                     continue;
                 }
             }
-            layer.on();
-            try {
-                current_document.saveAs(
-                    save_image, 
-                    save_options, 
-                    true, 
-                    Extension.LOWERCASE
-                );
-                layer.off();
-            } catch (e) {
-                $.write(e);
+            var parent_states = layer.on();
+            try { 
+                current_document.saveAs(layer.save_file, save_options, true, Extension.LOWERCASE);
+                success_counter++;
+            } catch (error) {
+                $.writeln(error);
             }
+            layer.off(parent_states);
         }
+        dialog.setinfo("Ending Process...");
         Leafs.restore();
+        dialog.close();
+        return success_counter;
     }
 
-    extractor();
-}) ();
+    function Dialog (information) {
+        const properties = {
+            maximizeButton: false,
+            minimizeButton: false,
+            borderless: false,
+            resizeable: false
+        };
+        this.dialog = new Window(
+            "window", SCRIPT_NAME + " v" + VERSION, undefined, properties
+        );
+        this.dialog.panel = this.dialog.add("panel", undefined);
+        this.dialog.panel.size = {width: 240, height: 80};
+        this.dialog.active = true;
+        this.dialog.panel.alignChild = "center";
+        this.dialog.panel.orientation = "column";
+        this.dialog.panel.info = this.dialog.panel.add("staticText", undefined);
+        this.dialog.panel.info.size = {width:200, height: 24};
+        this.dialog.panel.info.text = information;
+        this.dialog.show();
+
+        this.setinfo = function (info) {
+            this.dialog.panel.info.text = info;
+        }
+
+        this.close = function () {
+            this.dialog.close(0);
+        }
+    }
+
+    var result = extractor();
+    if (result) {
+        alert("There have " + result.toString() + " layer(s) has been extract.");
+    }
+
+}) (nogui=false, debug=false);
